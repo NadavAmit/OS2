@@ -18,6 +18,9 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
+//Asiignment 2 CAS
+extern uint64 cas(volatile void *addr, int expected, int newval);
+
 extern char trampoline[]; // trampoline.S
 
 // helps ensure that wakeups of wait()ing
@@ -85,17 +88,28 @@ myproc(void) {
   return p;
 }
 
-int
-allocpid() {
-  int pid;
+// int
+// allocpid() {
+//   int pid;
   
-  acquire(&pid_lock);
-  pid = nextpid;
-  nextpid = nextpid + 1;
-  release(&pid_lock);
+//   acquire(&pid_lock);
+//   pid = nextpid;
+//   nextpid = nextpid + 1;
+//   release(&pid_lock);
 
-  return pid;
+//   return pid;
+// }
+
+int
+allocpid() {  
+  int old;
+  do{
+    old = nextpid;
+  }while(cas(&nextpid ,old ,old+1));
+
+  return old;
 }
+
 
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
