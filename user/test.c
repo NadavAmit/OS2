@@ -10,27 +10,16 @@
 
 
 void procIdTest(int counter){
-    int pid=0;
-    int proccessArr[100];
-    int i;
-    int processCounter = 1;
-    for(i=0;i<counter;i++){
-        processCounter++;
-        pid = fork();
-        proccessArr[pid]=1;
-    }
-    printf("Total processes that has existed: %d\n",processCounter);
-    for(i=0;i<100;i++){
-        if(proccessArr[i]==1){
-            printf("Procces with pid: %d is created\n",i);
-        }
-    }
-    return;
+   for(int i =0; i<counter; i++){
+       fork();
+   }
+   exit(0);
 }
 
 int
 main(int argc, char *argv[])
 {
-    procIdTest(2);
+    procIdTest(5);
+    printf("hello World;");
     exit(0);
 }

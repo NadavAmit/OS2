@@ -18,9 +18,17 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
-//Asiignment 2 CAS
+//Assignment 2 Globals --------------------------------------------
+
+//CAS
 extern uint64 cas(volatile void *addr, int expected, int newval);
 
+//Linked Lists
+struct proc unused_proc_list;
+struct proc sleeping_proc_list;
+struct proc zombie_proc_list;
+
+//End of Assignment 2 Globals---------------------------------------------------------------
 extern char trampoline[]; // trampoline.S
 
 // helps ensure that wakeups of wait()ing
@@ -29,6 +37,28 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+
+
+//Initialize lists
+void
+linkedListsInit(void){
+
+  //initialize global linked lists locks and head node
+  initlock(&unused_proc_list.nodeLock, "unused_list_head_lock");
+  initlock(&sleeping_proc_list.nodeLock, "sleeping_list_head_lock");
+  initlock(&zombie_proc_list.nodeLock, "zombie_list_head_lock");
+
+  unused_proc_list.nextProcessInList= -1;
+  sleeping_proc_list.nextProcessInList= -1;
+  zombie_proc_list.nextProcessInList= -1;
+
+  //initialize CPU's linked lists locks and head node
+  struct cpu *c;
+  for(c = cpus; c < &cpus[NCPU]; c++) {
+      initlock(&c->runnable_proc_list.nodeLock, "runnable_list_head_lock");
+      c->runnable_proc_list.nextProcessInList = -1;
+  }
+}
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -50,15 +80,103 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+  int proccessIndex = 0;
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
+
+      //init proccess index 
+      p->procIndex=proccessIndex;
+      proccessIndex++;
+
+      //init next node Value to -1
+      p->nextProcessInList = -1;
+      
       p->kstack = KSTACK((int) (p - proc));
   }
 }
+void
+insertProcessToList(struct proc *p,struct proc *listDummyHead){
+  struct proc *currentProc;
+  struct proc *prevProc;
+  int listHeadIndex;
 
+  //acquire the head lock
+  acquire(&listDummyHead->nodeLock);
+  listHeadIndex = listDummyHead->nextProcessInList;
+  //In case the list is empty
+  if(listHeadIndex == -1){
+    listDummyHead->nextProcessInList = p->procIndex;
+    release(&listDummyHead->nodeLock);
+  }
+  //list isn't empty
+  else{
+    currentProc = &proc[listHeadIndex];
+    acquire(&currentProc->nodeLock);
+    release(&listDummyHead->nodeLock);
+
+    //itirate until you get to the final node of the list
+    while((currentProc->nextProcessInList)!= -1){
+      acquire(&proc[currentProc->nextProcessInList].nodeLock);
+      prevProc = currentProc;
+      currentProc = &proc[currentProc->nextProcessInList];
+      release(&prevProc->nodeLock);
+    }
+    
+    //found last node
+    //update next node and insert to list
+    currentProc->nextProcessInList = p->procIndex;
+    release(&currentProc->nodeLock);
+  }
+
+}
+
+void
+removeProcessFromList(struct proc *p,struct proc *listDummyHead){
+  struct proc *currentProc;
+  struct proc *prevProc;
+  int listHeadIndex;
+
+  //acquire the head lock
+  acquire(&listDummyHead->nodeLock);
+
+  listHeadIndex = listDummyHead->nextProcessInList;
+  //In case the list is empty - ERROR We cant delete
+  if(listHeadIndex == -1){
+    panic("Error removing process - empty list");
+  }
+  //acquire the real head lock
+   acquire(&proc[listHeadIndex].nodeLock);
+   
+   prevProc=listDummyHead;                               //pointers to two nodes
+   currentProc = &proc[listHeadIndex];
+  
+  //while the needed procces doesn't found or you didn't arrive to the end of the list
+  while ((!((currentProc->procIndex) == (p->procIndex))) && (currentProc->nextProcessInList != -1)){
+    release(&prevProc->nodeLock);
+    prevProc = currentProc;
+    currentProc = &proc[prevProc->nextProcessInList];
+    acquire(&currentProc->nodeLock);
+  }
+
+  //if we reached the end of the list then not found -FAIL
+  if(currentProc->nextProcessInList == -1){
+    release(&currentProc->nodeLock);
+    release(&prevProc->nodeLock);
+    panic("Error removing procces - process not found in list");
+  }
+  
+  //found the right node to delete
+  //delete node and detach it 
+  prevProc->nextProcessInList = currentProc->nextProcessInList;
+  currentProc->nextProcessInList = -1;
+
+  release(&prevProc->nodeLock);
+  release(&currentProc->nodeLock);
+
+
+}
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
 // to a different CPU.
@@ -88,6 +206,7 @@ myproc(void) {
   return p;
 }
 
+//Original allocpid
 // int
 // allocpid() {
 //   int pid;
@@ -386,6 +505,7 @@ exit(int status)
   p->state = ZOMBIE;
 
   release(&wait_lock);
+
 
   // Jump into the scheduler, never to return.
   sched();
