@@ -37,7 +37,13 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
-
+int
+isListEmpty(struct proc *list){
+  if((list->nextProcessInList) == -1){
+    return 1;
+  }
+  else return 0;
+}
 
 //Initialize lists
 void
@@ -177,6 +183,9 @@ removeProcessFromList(struct proc *p,struct proc *listDummyHead){
 
 
 }
+
+
+
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
 // to a different CPU.
@@ -579,14 +588,19 @@ scheduler(void)
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
 
-    for(p = proc; p < &proc[NPROC]; p++) {
+    while(!(isListEmpty(&(c->runnable_proc_list)))){
+
+      p = (&proc[(c->runnable_proc_list.nextProcessInList)]);
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        removeProcessFromList(p,&(c->runnable_proc_list));
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
@@ -630,8 +644,14 @@ void
 yield(void)
 {
   struct proc *p = myproc();
+  struct cpu *c = mycpu();
+
   acquire(&p->lock);
   p->state = RUNNABLE;
+
+  //Process is giving up its running time so re-inserting it to the end of runnable list
+  insertProcessToList(p,&(c->runnable_proc_list));
+  
   sched();
   release(&p->lock);
 }
@@ -678,6 +698,9 @@ sleep(void *chan, struct spinlock *lk)
   p->chan = chan;
   p->state = SLEEPING;
 
+  //inserting procces to Sleeping linked list
+  insertProcessToList(p,&sleeping_proc_list);
+
   sched();
 
   // Tidy up.
@@ -693,16 +716,30 @@ sleep(void *chan, struct spinlock *lk)
 void
 wakeup(void *chan)
 {
-  struct proc *p;
+  struct proc *p = &sleeping_proc_list;
+  struct cpu *c;
+  int currentpid = p->nextProcessInList;
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  while((currentpid != -1))
+  {
+    p=&proc[currentpid];
+
     if(p != myproc()){
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
+
+        //removing procces from sleeping list
+        removeProcessFromList(p,&sleeping_proc_list);
         p->state = RUNNABLE;
+        
+        //inserting procces to it's CPU runnable list
+        c=&cpus[p->assignedCPU];
+        insertProcessToList(p,&c->runnable_proc_list);
+
       }
       release(&p->lock);
     }
+    currentpid=p->nextProcessInList;
   }
 }
 
@@ -787,4 +824,10 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+int
+set_cpu(int cpu_num){
+  struct cpu *c = &cpus[cpu_num];
+  insertProcessToList(myproc,&c->runnable_proc_list);
+  yield();
 }

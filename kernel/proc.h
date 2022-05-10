@@ -101,6 +101,7 @@ struct proc {
   int procIndex;               // Proccess index in the Proc Array
   int nextProcessInList;       // The successor process in the current list
   struct spinlock nodeLock;    //lock for the process's node
+  int assignedCPU;
 };
 // Per-CPU state.
 struct cpu {
