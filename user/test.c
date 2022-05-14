@@ -13,13 +13,12 @@ void procIdTest(int counter){
    for(int i =0; i<counter; i++){
        fork();
    }
-   exit(0);
 }
 
 int
 main(int argc, char *argv[])
 {
-    procIdTest(5);
+    procIdTest(1);
     printf("hello World;");
     exit(0);
 }

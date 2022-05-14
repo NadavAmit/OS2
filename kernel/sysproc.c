@@ -95,3 +95,17 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+uint64
+sys_setcpu(void)
+{
+  int cid;
+
+  if(argint(0, &cid) < 0)
+    return -1;
+  return set_cpu(cid);
+}
+uint64
+sys_getcpu(void){
+  int cid= get_cpu();
+  return cid;
+}

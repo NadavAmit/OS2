@@ -8,6 +8,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct Linked_List;
 
 // bio.c
 void            binit(void);
@@ -104,8 +105,14 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
-void            removeProcessFromList(struct proc *p,struct proc *listDummyHead);
-void            insertProcessToList(struct proc *p,struct proc *listDummyHead);
+void            removeProcessFromList(struct proc *p,struct Linked_List *listDummyHead);
+void            insertProcessToList(struct proc *p,struct Linked_List *listDummyHead);
+int             set_cpu(int cpu_num);
+int             get_cpu(void);
+void            printLinkedList(struct Linked_List *list);
+int             get_list_head(struct Linked_List *lst);
+int             isListEmpty(struct Linked_List *list);
+
 
 // swtch.S
 void            swtch(struct context*, struct context*);

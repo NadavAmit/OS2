@@ -18,6 +18,25 @@ struct context {
   uint64 s11;
 };
 
+  //Assingment 2
+typedef struct Linked_List{
+    int head;             //index for the first process in the list
+    struct spinlock head_lock;
+    char* list_name;           
+} Linked_List;
+
+// Per-CPU state.
+struct cpu {
+  struct proc *proc;          // The process running on this cpu, or null.
+  struct context context;     // swtch() here to enter scheduler().
+  int noff;                   // Depth of push_off() nesting.
+  int intena;                 // Were interrupts enabled before push_off()?
+
+  struct Linked_List runnable_proc_list; //Part 3: Runnable linked list processes;
+};
+
+extern struct cpu cpus[NCPU];
+
 
 // per-process data for the trap handling code in trampoline.S.
 // sits in a page by itself just under the trampoline page in the
@@ -103,14 +122,4 @@ struct proc {
   struct spinlock nodeLock;    //lock for the process's node
   int assignedCPU;
 };
-// Per-CPU state.
-struct cpu {
-  struct proc *proc;          // The process running on this cpu, or null.
-  struct context context;     // swtch() here to enter scheduler().
-  int noff;                   // Depth of push_off() nesting.
-  int intena;                 // Were interrupts enabled before push_off()?
 
-  struct proc runnable_proc_list; //Part 3: Runnable linked list processes;
-};
-
-extern struct cpu cpus[NCPU];

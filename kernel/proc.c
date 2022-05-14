@@ -24,9 +24,9 @@ static void freeproc(struct proc *p);
 extern uint64 cas(volatile void *addr, int expected, int newval);
 
 //Linked Lists
-struct proc unused_proc_list;
-struct proc sleeping_proc_list;
-struct proc zombie_proc_list;
+struct Linked_List unused_proc_list;
+struct Linked_List sleeping_proc_list;
+struct Linked_List zombie_proc_list;
 
 //End of Assignment 2 Globals---------------------------------------------------------------
 extern char trampoline[]; // trampoline.S
@@ -38,11 +38,35 @@ extern char trampoline[]; // trampoline.S
 struct spinlock wait_lock;
 
 int
-isListEmpty(struct proc *list){
-  if((list->nextProcessInList) == -1){
+isListEmpty(struct Linked_List *list){
+  if((list->head) == -1){
     return 1;
   }
   else return 0;
+}
+
+int 
+get_list_head(struct Linked_List *list){
+  acquire(&list->head_lock); 
+  int head = list->head;
+  release(&list->head_lock);
+  return head;
+}
+
+void printLinkedList(struct Linked_List *list){
+  int current = list->head;
+  struct proc *p;
+  if(current != -1){
+    p=&proc[list->head];
+  }
+  printf("%s \n",list->list_name);
+  printf("\n[");
+  while(current !=-1){
+    printf("%d->", current);
+    p=&proc[current];
+    current = p->nextProcessInList;
+  }
+  printf(" ]\n");
 }
 
 //Initialize lists
@@ -50,19 +74,25 @@ void
 linkedListsInit(void){
 
   //initialize global linked lists locks and head node
-  initlock(&unused_proc_list.nodeLock, "unused_list_head_lock");
-  initlock(&sleeping_proc_list.nodeLock, "sleeping_list_head_lock");
-  initlock(&zombie_proc_list.nodeLock, "zombie_list_head_lock");
+  initlock(&unused_proc_list.head_lock, "unused_list_head_lock");
+  initlock(&sleeping_proc_list.head_lock, "sleeping_list_head_lock");
+  initlock(&zombie_proc_list.head_lock, "zombie_list_head_lock");
 
-  unused_proc_list.nextProcessInList= -1;
-  sleeping_proc_list.nextProcessInList= -1;
-  zombie_proc_list.nextProcessInList= -1;
+  unused_proc_list.head= -1;
+  sleeping_proc_list.head= -1;
+  zombie_proc_list.head= -1;
+
+  //initialize names
+  unused_proc_list.list_name = "unused_proc_list";
+  sleeping_proc_list.list_name = "sleeping_proc_list";
+  zombie_proc_list.list_name = "zombie_proc_list";
 
   //initialize CPU's linked lists locks and head node
   struct cpu *c;
   for(c = cpus; c < &cpus[NCPU]; c++) {
-      initlock(&c->runnable_proc_list.nodeLock, "runnable_list_head_lock");
-      c->runnable_proc_list.nextProcessInList = -1;
+      initlock(&c->runnable_proc_list.head_lock, "runnable_list_head_lock");
+      c->runnable_proc_list.head = -1;
+      c->runnable_proc_list.list_name = "cpu_runnable_proc_list";
   }
 }
 // Allocate a page for each process's kernel stack.
@@ -86,101 +116,177 @@ void
 procinit(void)
 {
   struct proc *p;
+  linkedListsInit();
+
   int proccessIndex = 0;
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
 
-      //init proccess index 
+      //procces initialziation
       p->procIndex=proccessIndex;
       proccessIndex++;
-
-      //init next node Value to -1
       p->nextProcessInList = -1;
-      
+      p->assignedCPU =-1;
+
+      //add the to the unused list
+      insertProcessToList(p,&unused_proc_list);
+
       p->kstack = KSTACK((int) (p - proc));
   }
 }
 void
-insertProcessToList(struct proc *p,struct proc *listDummyHead){
+insertProcessToList(struct proc *p,struct Linked_List *list){
   struct proc *currentProc;
   struct proc *prevProc;
   int listHeadIndex;
 
   //acquire the head lock
-  acquire(&listDummyHead->nodeLock);
-  listHeadIndex = listDummyHead->nextProcessInList;
+  // printf("before insertProcessToList acquire\n");//delete
+  acquire(&list->head_lock);
+  listHeadIndex = list->head;
+  // printf("after insertProcessToList acquire\n");//delete
+ 
   //In case the list is empty
   if(listHeadIndex == -1){
-    listDummyHead->nextProcessInList = p->procIndex;
-    release(&listDummyHead->nodeLock);
+    list->head = p->procIndex;
+    p->nextProcessInList = -1;
+    release(&list->head_lock);
   }
+  
   //list isn't empty
   else{
-    currentProc = &proc[listHeadIndex];
-    acquire(&currentProc->nodeLock);
-    release(&listDummyHead->nodeLock);
+    prevProc = &proc[listHeadIndex];
 
-    //itirate until you get to the final node of the list
-    while((currentProc->nextProcessInList)!= -1){
-      acquire(&proc[currentProc->nextProcessInList].nodeLock);
-      prevProc = currentProc;
-      currentProc = &proc[currentProc->nextProcessInList];
+    // printf("before insertProcessToList.else acquire\n");  //delete
+
+    acquire(&prevProc->nodeLock);
+    release(&list->head_lock);
+    // printf("after insertProcessToList.else acquire\n"); //delete
+
+    //if list contains exactly one node
+    if(prevProc->nextProcessInList == -1){
+    // printf("inserting process pid: %d to list: %s \n",p->procIndex,list->list_name);
+      prevProc->nextProcessInList= p->procIndex;
+      p->nextProcessInList = -1;
       release(&prevProc->nodeLock);
     }
-    
-    //found last node
-    //update next node and insert to list
-    currentProc->nextProcessInList = p->procIndex;
-    release(&currentProc->nodeLock);
-  }
 
+
+   //list contains two nodes or more
+    else{
+      currentProc = &proc[prevProc->nextProcessInList];
+      acquire(&currentProc->nodeLock);
+
+      //itirate until you get to the final node of the list
+      while((currentProc->nextProcessInList)!= -1){
+        // printf("before insertProcessToList.while acquire\n"); //delete
+        release(&prevProc->nodeLock);
+        prevProc = currentProc;
+        currentProc = &proc[currentProc->nextProcessInList];
+        acquire(&currentProc->nodeLock);
+        // printf("after insertProcessToList.while acquire\n"); //delete        
+      }
+    
+      //found last node
+      //update next node and insert to list
+      release(&prevProc->nodeLock);
+      //printf("inserting process pid: %d to list: %s \n",p->procIndex,list->list_name);
+      currentProc->nextProcessInList = p->procIndex;
+      p->nextProcessInList = -1;
+      release(&currentProc->nodeLock);
+      }
+
+  }
 }
 
 void
-removeProcessFromList(struct proc *p,struct proc *listDummyHead){
+removeProcessFromList(struct proc *p,struct Linked_List *list){
   struct proc *currentProc;
   struct proc *prevProc;
-  int listHeadIndex;
-
+  // printf("zombie list head head points to: %d\n",zombie_proc_list.nextProcessInList);
+  // printf("list Dummy head points to: %d\n",&listDummyHead->nextProcessInList);
+  //printLinkedList(list);
   //acquire the head lock
-  acquire(&listDummyHead->nodeLock);
+  // printf("before removeproccesFromList acquire\n"); //delete
 
-  listHeadIndex = listDummyHead->nextProcessInList;
+  acquire(&list->head_lock);
+  // printf("after removeproccesFromList acquire\n"); //delete
+
   //In case the list is empty - ERROR We cant delete
-  if(listHeadIndex == -1){
+  if(list->head == -1){
+    release(&list->head_lock);
     panic("Error removing process - empty list");
   }
+
+  //list is not empty
   //acquire the real head lock
-   acquire(&proc[listHeadIndex].nodeLock);
+  // printf("before removeproccesFromList.realheadlock acquire\n"); //delete
+  prevProc=&proc[list->head];
+  acquire(&prevProc->nodeLock);                               //pointers to two nodes
+  release(&list->head_lock);
+
+  if(prevProc->procIndex == p->procIndex){
+    if(prevProc->nextProcessInList == -1){
+    list->head = -1;
+    }
+    else{
+      list->head = prevProc->nextProcessInList;
+    }
+    release(&prevProc->nodeLock);
+    return;
+
+  }
+
+  //only one node and it's not what we searched for
+  if(prevProc->nextProcessInList == -1){
+    release(&prevProc->nodeLock);
+    panic("Error removing process - Node not found");
+    return;
+  }
+
+  currentProc = &proc[prevProc->nextProcessInList];
+  acquire(&currentProc->nodeLock);
+  // printf("after removeproccesFromList.realheadlock acquire\n"); //delete
    
-   prevProc=listDummyHead;                               //pointers to two nodes
-   currentProc = &proc[listHeadIndex];
-  
+  //  prevProc=listDummyHead;                               //pointers to two nodes
+  //  currentProc = &proc[listHeadIndex];
+    //printf("before while with index: %d \n",currentProc->procIndex);
+    //printf("needed index: %d ,/t actual index: %d\n ",p->procIndex,currentProc->procIndex);
+
   //while the needed procces doesn't found or you didn't arrive to the end of the list
-  while ((!((currentProc->procIndex) == (p->procIndex))) && (currentProc->nextProcessInList != -1)){
+  while (((currentProc->procIndex) != (p->procIndex)) && (currentProc->nextProcessInList != -1)){
+    // printf("inside while with index: %d \n",currentProc->procIndex);
+
+    // printf("needed index: %d ,/t actual index: %d\n ",p->procIndex,currentProc->procIndex);
     release(&prevProc->nodeLock);
     prevProc = currentProc;
     currentProc = &proc[prevProc->nextProcessInList];
     acquire(&currentProc->nodeLock);
-  }
+  // printf("before removeproccesFromList.while acquire\n"); //delete
 
-  //if we reached the end of the list then not found -FAIL
-  if(currentProc->nextProcessInList == -1){
-    release(&currentProc->nodeLock);
-    release(&prevProc->nodeLock);
-    panic("Error removing procces - process not found in list");
+    
+  // printf("after removeproccesFromList.while acquire\n"); //delete
+
   }
   
   //found the right node to delete
   //delete node and detach it 
-  prevProc->nextProcessInList = currentProc->nextProcessInList;
-  currentProc->nextProcessInList = -1;
-
-  release(&prevProc->nodeLock);
-  release(&currentProc->nodeLock);
-
+  if(currentProc->procIndex == p->procIndex){
+    prevProc->nextProcessInList = currentProc->nextProcessInList;
+    currentProc->nextProcessInList = -1;
+    release(&prevProc->nodeLock);
+    release(&currentProc->nodeLock);
+    return;
+  }
+  //if we reached the end of the list then not found -FAIL
+  else{
+    release(&prevProc->nodeLock);
+    release(&currentProc->nodeLock);
+    panic("Error removing procces - process not found in list");
+  }
+  
 
 }
 
@@ -246,11 +352,15 @@ allocpid() {
 static struct proc*
 allocproc(void)
 {
+  //printLinkedList(&unused_proc_list);
   struct proc *p;
 
-  for(p = proc; p < &proc[NPROC]; p++) {
+  if(!isListEmpty(&unused_proc_list))
+ {
+   p=&proc[get_list_head(&unused_proc_list)];
     acquire(&p->lock);
     if(p->state == UNUSED) {
+      removeProcessFromList(p,&unused_proc_list);
       goto found;
     } else {
       release(&p->lock);
@@ -306,6 +416,13 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  p->nextProcessInList =-1;
+  p->assignedCPU =-1;
+  removeProcessFromList(p,&zombie_proc_list);
+
+  insertProcessToList(p,&unused_proc_list);
+
 }
 
 // Create a user page table for a given process,
@@ -385,6 +502,11 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  
+  //insert first procc to the first cpu
+  struct cpu *firstCPU = &cpus[0];
+  p->assignedCPU = 0;
+  insertProcessToList(p,&(firstCPU->runnable_proc_list));
 
   release(&p->lock);
 }
@@ -417,12 +539,10 @@ fork(void)
   int i, pid;
   struct proc *np;
   struct proc *p = myproc();
-
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
   }
-
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -456,7 +576,12 @@ fork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
-
+  acquire(&np->nodeLock);
+  np->assignedCPU = p->assignedCPU;
+  release(&np->nodeLock);
+  struct cpu *c = &cpus[np->assignedCPU];
+  insertProcessToList(np,&(c->runnable_proc_list));
+  
   return pid;
 }
 
@@ -506,12 +631,21 @@ exit(int status)
   reparent(p);
 
   // Parent might be sleeping in wait().
+
+  printf("waking up parrent\n");
   wakeup(p->parent);
   
   acquire(&p->lock);
 
   p->xstate = status;
   p->state = ZOMBIE;
+
+
+  acquire(&p->nodeLock);
+  p->assignedCPU = -1;
+  release(&p->nodeLock);
+  insertProcessToList(p,&zombie_proc_list);
+
 
   release(&wait_lock);
 
@@ -589,25 +723,30 @@ scheduler(void)
     intr_on();
 
     while(!(isListEmpty(&(c->runnable_proc_list)))){
+      int cpu_list_head_index = get_list_head(&(c->runnable_proc_list));
+      if(cpu_list_head_index != -1) {
+        p = (&proc[cpu_list_head_index]);
+        acquire(&p->lock);
 
-      p = (&proc[(c->runnable_proc_list.nextProcessInList)]);
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
+        if(p->state == RUNNABLE) {
 
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        removeProcessFromList(p,&(c->runnable_proc_list));
+          // Switch to chosen process.  It is the process's job
+          // to release its lock and then reacquire it
+          // before jumping back to us.
 
-        swtch(&c->context, &p->context);
+          removeProcessFromList(p,&(c->runnable_proc_list));
+          p->state = RUNNING;
+          c->proc = p;
+          
+          //printLinkedList(&unused_proc_list);
+          swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+        }
+        release(&p->lock);
       }
-      release(&p->lock);
     }
   }
 }
@@ -692,14 +831,17 @@ sleep(void *chan, struct spinlock *lk)
   // so it's okay to release lk.
 
   acquire(&p->lock);  //DOC: sleeplock1
+  //inserting procces to Sleeping linked list
+  //printf("inside sleep -before insert process to sleep\n"); //delete
+  insertProcessToList(p,&sleeping_proc_list);
+  //printf("inside sleep -after insert process to sleep\n"); //delete
+ 
   release(lk);
 
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
 
-  //inserting procces to Sleeping linked list
-  insertProcessToList(p,&sleeping_proc_list);
 
   sched();
 
@@ -716,31 +858,41 @@ sleep(void *chan, struct spinlock *lk)
 void
 wakeup(void *chan)
 {
-  struct proc *p = &sleeping_proc_list;
+  struct proc *p;
   struct cpu *c;
-  int currentpid = p->nextProcessInList;
+  int currentpid = get_list_head(&sleeping_proc_list);
+// printf("before wakeup while while \n");
+//printLinkedList(&sleeping_proc_list);
 
   while((currentpid != -1))
   {
+    // printf("inside wakeup while while \n");
     p=&proc[currentpid];
-
+    currentpid = p->nextProcessInList;
     if(p != myproc()){
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
 
         //removing procces from sleeping list
+        // printf("inside wakeup - before remove fromlist\n");//delete
+        //printLinkedList(&sleeping_proc_list);
         removeProcessFromList(p,&sleeping_proc_list);
+        // printf("inside wakeup - after remove fromlist\n");//delete
+
         p->state = RUNNABLE;
         
         //inserting procces to it's CPU runnable list
         c=&cpus[p->assignedCPU];
-        insertProcessToList(p,&c->runnable_proc_list);
+        insertProcessToList(p,&(c->runnable_proc_list));
 
       }
       release(&p->lock);
     }
-    currentpid=p->nextProcessInList;
+    // currentpid=p->nextProcessInList;
+    // printf("end of wakeup while currentpid value: %d \n",currentpid);
+
   }
+  // printf("after wakeup while while \n");
 }
 
 // Kill the process with the given pid.
@@ -827,7 +979,31 @@ procdump(void)
 }
 int
 set_cpu(int cpu_num){
-  struct cpu *c = &cpus[cpu_num];
-  insertProcessToList(myproc,&c->runnable_proc_list);
+struct proc *p;
+
+  //number not in range
+  if(cpu_num<0 || cpu_num >= NCPU){
+    return -1;
+  }
+
+  else{
+
+  p = myproc();
+  // c=&cpus[cpu_num];
+
+
+  acquire(&p->nodeLock);
+  
+  //The procces is running so its in RUNNABLE state
+  //insertProcessToList(p,&(c->runnable_proc_list));
+  p->assignedCPU = cpu_num;
+ 
+  release(&p->nodeLock);
+ 
   yield();
+  return cpu_num;
+  }
+}
+int get_cpu(){
+  return cpuid();
 }
